@@ -6,7 +6,7 @@
     "no_monitor": "No focused monitor was reported by the compositor.",
     "no_window": "No window matched that direction.",
     "saved": "Recording saved",
-    "saved_hint": "Open the file with the action below."
+    "saved_hint": "Saved to:"
   },
   "panel": {
     "cancel": "Cancel",

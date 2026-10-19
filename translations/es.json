@@ -6,7 +6,7 @@
     "no_monitor": "El compositor no reportó ningún monitor enfocado.",
     "no_window": "Ninguna ventana coincide con esa dirección.",
     "saved": "Grabación guardada",
-    "saved_hint": "Abrí el archivo con la acción de abajo."
+    "saved_hint": "Guardado en:"
   },
   "panel": {
     "cancel": "Cancelar",

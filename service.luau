@@ -17,6 +17,10 @@ local recorder = nil
 local lastChoice = nil
 
 local scriptPath
+local dataDir = nil
+local generation = 0
+local jobs = {}
+local jobCounter = 0
 
 local SOURCES = { region = true, window = true, fullscreen = true }
 local AUDIOS = { none = true, default_output = true, default_input = true, both = true }
@@ -37,39 +41,102 @@ local function publish()
   })
 end
 
+-- Poll faster while a picker or a stop is in flight, so the UI reacts within
+-- ~250ms; poll the recorder state only twice a second otherwise.
 local function setState(next)
   if state == next then
     return
   end
   state = next
+  if state == "recording" or state == "idle" then
+    noctalia.setUpdateInterval(2000)
+  else
+    noctalia.setUpdateInterval(250)
+  end
   publish()
 end
 
 -- ── notifications ──────────────────────────────────────────────────────────────
 
 local function parseResult(result)
-  local file, preview
   for line in (result.stdout or ""):gmatch("[^\r\n]+") do
     if line:match("^file=") then
-      file = line:sub(6)
-    elseif line:match("^preview=") then
-      preview = line:sub(9)
+      return line:sub(6)
     end
   end
-  return file, preview
+  return nil
 end
 
-local function notifySaved(file, preview)
+local function notifySaved(file)
   if not file or file == "" then
     return
   end
+  -- noctalia.notify takes only a title and a body: no preview image and no
+  -- action button, so the body points at the path instead of promising one.
   noctalia.notify(
     noctalia.tr("notify.saved"),
-    noctalia.tr("notify.saved_hint") .. "\n" .. file,
-    preview ~= "" and preview or nil
+    noctalia.tr("notify.saved_hint") .. "\n" .. file
   )
   if cfg("copy_to_clipboard") == true then
     noctalia.copyToClipboard("file://" .. file, "text/uri-list")
+  end
+end
+
+-- ── detached jobs ──────────────────────────────────────────────────────────────
+
+-- runAsync clamps every timeout to 60s. That is too short for a picker the user
+-- may take minutes to finish, and for finalizing a long recording, so those run
+-- through scripts/run-detached.sh with no callback and the service polls for a
+-- result file. The helper writes .out and .err and, last, .code: seeing .code
+-- means the other two are complete.
+
+local function ensureDataDir()
+  if dataDir then
+    return dataDir
+  end
+  local dir = noctalia.pluginDataDir()
+  if dir and dir ~= "" then
+    noctalia.mkdirAll(dir)
+    dataDir = dir
+  end
+  return dataDir
+end
+
+local function startJob(argv, onDone)
+  local dir = ensureDataDir()
+  if not dir then
+    return false
+  end
+  jobCounter = jobCounter + 1
+  local prefix = string.format("%s/job-%d-%d", dir, noctalia.nowMs(), jobCounter)
+  local full = { sibling("run-detached.sh"), prefix, "--" }
+  for _, arg in ipairs(argv) do
+    table.insert(full, arg)
+  end
+  if not noctalia.runAsync(full) then
+    return false
+  end
+  jobs[prefix] = { onDone = onDone }
+  return true
+end
+
+local function pollJobs()
+  local ready = {}
+  for prefix, job in pairs(jobs) do
+    if noctalia.fileExists(prefix .. ".code") then
+      ready[#ready + 1] = { prefix, job }
+    end
+  end
+  for _, entry in ipairs(ready) do
+    local prefix, job = entry[1], entry[2]
+    jobs[prefix] = nil
+    local code = tonumber(noctalia.readFile(prefix .. ".code") or "") or -1
+    local out = noctalia.readFile(prefix .. ".out") or ""
+    local err = noctalia.readFile(prefix .. ".err") or ""
+    noctalia.removeFile(prefix .. ".code")
+    noctalia.removeFile(prefix .. ".out")
+    noctalia.removeFile(prefix .. ".err")
+    job.onDone({ exitCode = code, stdout = out, stderr = err, timedOut = false })
   end
 end
 
@@ -134,12 +201,15 @@ local function selectionToTarget(selection)
   return string.format("region:%sx%s+%s+%s", w, h, x, y)
 end
 
-local function resolveTarget(chosen, onDone)
+local function resolveTarget(chosen, gen, onDone)
   if chosen.source == "fullscreen" then
     -- Ask the compositor through pick-region.sh rather than
     -- noctalia.focusedOutputName(): the latter can report nothing while the menu
     -- panel is still closing, which is how "no focused monitor" happened.
-    noctalia.runAsync({ sibling("pick-region.sh"), "fullscreen", "--match-monitor" }, function(result)
+    if not startJob({ sibling("pick-region.sh"), "fullscreen", "--match-monitor" }, function(result)
+      if gen ~= generation then
+        return
+      end
       local target = selectionToTarget((result.stdout or ""):match("[^\r\n]+"))
       if target then
         onDone(target)
@@ -153,7 +223,10 @@ local function resolveTarget(chosen, onDone)
         noctalia.notifyError(noctalia.tr("notify.failed"), noctalia.tr("notify.no_monitor"))
         onDone(nil)
       end
-    end)
+    end) then
+      noctalia.notifyError(noctalia.tr("notify.failed"), noctalia.tr("notify.launch_failed"))
+      onDone(nil)
+    end
     return
   end
 
@@ -163,20 +236,27 @@ local function resolveTarget(chosen, onDone)
   local mode = chosen.source == "window" and "windows" or "region"
 
   -- Let the panel finish closing before the picker freezes the screen, or the
-  -- panel shape ends up in the frozen frame.
+  -- panel shape ends up in the frozen frame. This short command fits inside
+  -- runAsync's clamp; the picker itself runs detached.
   noctalia.runAsync({ "sleep", "0.25" }, function()
-    if state ~= "selecting" then
+    if gen ~= generation or state ~= "selecting" then
       return
     end
-    noctalia.runAsync({ sibling("pick-region.sh"), mode, "--match-monitor" }, function(result)
+    if not startJob({ sibling("pick-region.sh"), mode, "--match-monitor" }, function(result)
+      if gen ~= generation then
+        return
+      end
       onDone(selectionToTarget((result.stdout or ""):match("[^\r\n]+")))
-    end)
+    end) then
+      noctalia.notifyError(noctalia.tr("notify.failed"), noctalia.tr("notify.launch_failed"))
+      onDone(nil)
+    end
   end)
 end
 
 -- ── recording ──────────────────────────────────────────────────────────────────
 
-local function launch(chosen, target)
+local function launch(chosen, target, gen)
   local argv = { recordScript(), "start" }
   for _, arg in ipairs(baseArgs(chosen)) do
     table.insert(argv, arg)
@@ -191,6 +271,9 @@ local function launch(chosen, target)
   log(`starting: {table.concat(argv, " ")}`)
 
   local started = noctalia.runAsync(argv, function(result)
+    if gen ~= generation then
+      return
+    end
     local file = parseResult(result)
     if result.exitCode == 0 then
       outputPath = file or ""
@@ -202,7 +285,7 @@ local function launch(chosen, target)
     end
   end, 120000)
 
-  if not started then
+  if not started and gen == generation then
     setState("idle")
     noctalia.notifyError(noctalia.tr("notify.failed"), noctalia.tr("notify.launch_failed"))
   end
@@ -215,10 +298,14 @@ local function start(choice)
 
   local chosen = normalize(choice)
   lastChoice = chosen
+  -- A generation tags this run. A late callback from a cancelled run carries an
+  -- older tag and is ignored, even if a new run is already selecting.
+  generation = generation + 1
+  local gen = generation
   setState("selecting")
 
-  resolveTarget(chosen, function(target)
-    if state ~= "selecting" then
+  resolveTarget(chosen, gen, function(target)
+    if gen ~= generation or state ~= "selecting" then
       return
     end
     if not target then
@@ -227,7 +314,7 @@ local function start(choice)
       return
     end
     setState("starting")
-    launch(chosen, target)
+    launch(chosen, target, gen)
   end)
 end
 
@@ -238,22 +325,33 @@ local function stop()
 
   -- While selecting, the picker is ours rather than record.sh's, so record.sh
   -- cannot cancel it. Kill slurp: the picker exits non-zero and resolveTarget
-  -- sees the cancel.
+  -- sees the cancel. Bumping the generation drops the in-flight picker.
   if state == "selecting" then
     noctalia.runAsync({ "pkill", "-x", "slurp" })
+    generation = generation + 1
     setState("idle")
     return
   end
 
+  generation = generation + 1
+  local gen = generation
   setState("stopping")
   log("stopping recording")
 
-  noctalia.runAsync({ recordScript(), "stop" }, function(result)
-    local file, preview = parseResult(result)
+  local function onStopped(result)
+    if gen ~= generation then
+      return
+    end
     setState("idle")
-    notifySaved(file, preview)
+    notifySaved(parseResult(result))
     outputPath = ""
-  end, 60000)
+  end
+
+  -- Finalizing a long recording can outlast runAsync's 60s clamp, so stop runs
+  -- detached too. Fall back to a bounded run only if the helper cannot launch.
+  if not startJob({ recordScript(), "stop" }, onStopped) then
+    noctalia.runAsync({ recordScript(), "stop" }, onStopped, 60000)
+  end
 end
 
 -- ── commands ───────────────────────────────────────────────────────────────────
@@ -309,12 +407,15 @@ end
 
 -- ── lifecycle ──────────────────────────────────────────────────────────────────
 
--- A recording ended from a terminal, or the recorder died on its own, would
--- otherwise leave the widget showing "recording" forever. Polling runs rarely
--- enough to stay invisible, and only while a recording is in flight.
+-- Poll the recorder state rarely; setState() raises the rate while a picker, a
+-- start or a stop is in flight. A recording that ended from a terminal, or a
+-- recorder that died on its own, would otherwise leave the widget showing
+-- "recording" forever.
 noctalia.setUpdateInterval(2000)
 
 function update()
+  pollJobs()
+
   if recorder ~= nil then
     return
   end
@@ -322,18 +423,23 @@ function update()
     return
   end
 
-  recorder = noctalia.runAsync({ recordScript(), "status" }, function(result)
+  local started = noctalia.runAsync({ recordScript(), "status" }, function(result)
     recorder = nil
     local reported = (result.stdout or ""):match("state=([%w_]+)")
     if reported == "recording" then
       return
     end
     if state == "recording" then
-      log("recorder is gone; clearing state")
-      outputPath = ""
-      setState("idle")
+      -- The recorder died on its own. Go through stop so the webcam overlay and
+      -- the runtime files are cleaned up and the partial file finalized, instead
+      -- of leaving mpv alive to appear in the next recording.
+      log("recorder is gone; finalizing")
+      stop()
     end
   end)
+  -- runAsync returns false when the command could not launch; a `false` here
+  -- would satisfy `recorder ~= nil` forever and stop the polling entirely.
+  recorder = started and true or nil
 end
 
 function onConfigChanged()
@@ -343,17 +449,25 @@ end
 function onExit()
   -- A reload or disable must not leave a picker, a recorder, or a webcam overlay
   -- running with nothing left to stop it.
+  generation = generation + 1
   if state == "selecting" then
     noctalia.runAsync({ "pkill", "-x", "slurp" })
   end
   if state == "recording" or state == "starting" then
-    noctalia.runAsync({ recordScript(), "stop" })
+    -- Detached, so finalizing is not cut off by runAsync's 60s clamp.
+    if not startJob({ recordScript(), "stop" }, function() end) then
+      noctalia.runAsync({ recordScript(), "stop" }, nil, 60000)
+    end
   end
 end
 
 function onEnable()
   local dir = noctalia.pluginDir()
   scriptPath = dir and (dir .. "/scripts/record.sh") or nil
+  dataDir = noctalia.pluginDataDir()
+  if dataDir then
+    noctalia.mkdirAll(dataDir)
+  end
   available = scriptPath ~= nil
     and noctalia.commandExists("gpu-screen-recorder")
     and noctalia.commandExists("slurp")

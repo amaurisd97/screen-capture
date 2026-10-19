@@ -20,7 +20,7 @@ Install these commands on `PATH`. Every one is declared in `plugin.toml`:
 - `jq` — parses the `hyprctl` JSON.
 - `hyprctl` — resolves monitors and windows and drives the webcam overlay.
 - `hyprpicker` — freezes the screen while you drag the region.
-- `ffmpeg` — trims the opening frame, normalizes audio and builds the preview.
+- `ffmpeg` — trims the opening frame and normalizes audio.
 - `flock` — serializes start and stop.
 
 For the webcam overlay: `mpv` (renders the camera) and `v4l2-ctl` (picks a
@@ -128,13 +128,14 @@ are thin clients that only mirror state.
 | --- | --- |
 | `pick-region.sh` | Prints the capture target: `monitor:NAME` or `X,Y WxH` |
 | `record.sh` | `start` / `stop` / `status`, serialized on its own lock |
+| `run-detached.sh` | Runs a picker or a stop with no deadline and records its result |
 | `webcam-list.sh` | Lists `/dev/video*` nodes that can actually capture |
 | `webcam-resize.sh` | Sizes and places the webcam overlay |
 
 ### Files and processes
 
 - Writes recordings to `directory` (default `~/Videos/Recordings`).
-- Writes run state, the log and the notification preview next to
+- Writes run state, the log and detached-job results next to
   `$XDG_RUNTIME_DIR/screen-capture` (overridable with
   `SCREEN_CAPTURE_RUNTIME_DIR`).
 - Spawns `gpu-screen-recorder`, `slurp`, `hyprctl`, `hyprpicker`, `jq`,
