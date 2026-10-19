@@ -410,7 +410,8 @@ finalize_recording() {
     fi
   fi
 
-  local processed="${latest%.mp4}-processed.mp4"
+     local processed
+     processed=$(mktemp "${latest%.mp4}-processed.XXXXXX.mp4") || return 1
   if ffmpeg "${args[@]}" "$processed" -loglevel quiet 2>/dev/null; then
     mv "$processed" "$latest"
   else
@@ -500,7 +501,8 @@ start | stop)
 
   if [[ $ACTION == stop ]]; then
     echo "state=idle"
-    exit 1
+    stop_recording
+    exit 0
   fi
 
   rm -f "$CANCEL_FILE"

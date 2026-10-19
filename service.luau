@@ -275,7 +275,7 @@ local function launch(chosen, target, gen)
 
   log(`starting: {table.concat(argv, " ")}`)
 
-  local started = noctalia.runAsync(argv, function(result)
+   local started = startJob(argv, function(result)
     if gen ~= generation then
       return
     end
@@ -288,7 +288,7 @@ local function launch(chosen, target, gen)
       setState("idle")
       noctalia.notifyError(noctalia.tr("notify.failed"), noctalia.tr("notify.failed_hint"))
     end
-  end, 120000)
+  end)
 
   if not started and gen == generation then
     setState("idle")
