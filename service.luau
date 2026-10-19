@@ -206,27 +206,32 @@ local function resolveTarget(chosen, gen, onDone)
     -- Ask the compositor through pick-region.sh rather than
     -- noctalia.focusedOutputName(): the latter can report nothing while the menu
     -- panel is still closing, which is how "no focused monitor" happened.
-    if not startJob({ sibling("pick-region.sh"), "fullscreen", "--match-monitor" }, function(result)
-      if gen ~= generation then
+    noctalia.runAsync({ "sleep", "0.25" }, function()
+      if gen ~= generation or state ~= "selecting" then
         return
       end
-      local target = selectionToTarget((result.stdout or ""):match("[^\r\n]+"))
-      if target then
-        onDone(target)
-        return
-      end
-      -- Last resort if the picker could not resolve a monitor.
-      local monitor = noctalia.focusedOutputName()
-      if monitor and monitor ~= "" then
-        onDone(string.format("monitor:%s", monitor))
-      else
-        noctalia.notifyError(noctalia.tr("notify.failed"), noctalia.tr("notify.no_monitor"))
+      if not startJob({ sibling("pick-region.sh"), "fullscreen", "--match-monitor" }, function(result)
+        if gen ~= generation then
+          return
+        end
+        local target = selectionToTarget((result.stdout or ""):match("[^\r\n]+"))
+        if target then
+          onDone(target)
+          return
+        end
+        -- Last resort if the picker could not resolve a monitor.
+        local monitor = noctalia.focusedOutputName()
+        if monitor and monitor ~= "" then
+          onDone(string.format("monitor:%s", monitor))
+        else
+          noctalia.notifyError(noctalia.tr("notify.failed"), noctalia.tr("notify.no_monitor"))
+          onDone(nil)
+        end
+      end) then
+        noctalia.notifyError(noctalia.tr("notify.failed"), noctalia.tr("notify.launch_failed"))
         onDone(nil)
       end
-    end) then
-      noctalia.notifyError(noctalia.tr("notify.failed"), noctalia.tr("notify.launch_failed"))
-      onDone(nil)
-    end
+    end)
     return
   end
 
