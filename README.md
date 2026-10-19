@@ -21,6 +21,8 @@ Install these commands on `PATH`. Every one is declared in `plugin.toml`:
 - `hyprctl` — resolves monitors and windows and drives the webcam overlay.
 - `hyprpicker` — freezes the screen while you drag the region.
 - `ffmpeg` — trims the opening frame and normalizes audio.
+- `ffprobe` — inspects audio streams during normalization.
+- `pgrep` and `pkill` — tracks and cancels background processes and pickers cleanly.
 - `flock` — serializes start and stop.
 
 For the webcam overlay: `mpv` (renders the camera) and `v4l2-ctl` (picks a
