@@ -46,6 +46,10 @@ JQ_MONITOR_GEO='
 
 mkdir -p "$RUNTIME_DIR" || exit 1
 
+PICKER_PID_FILE="$RUNTIME_DIR/capture-picker-pid"
+echo $$ > "$PICKER_PID_FILE"
+trap 'rm -f "$PICKER_PID_FILE"' EXIT
+
 active_workspace() {
   hyprctl monitors -j | jq -r '.[] | select(.focused == true) .activeWorkspace.id'
 }

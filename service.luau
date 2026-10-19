@@ -67,6 +67,29 @@ local function parseResult(result)
   return nil
 end
 
+local function fileUri(path)
+  local encoded = path:gsub("([^%w%-%._~/])", function(c)
+    return string.format("%%%02X", string.byte(c))
+  end)
+  return "file://" .. encoded
+end
+
+local function cancelPicker()
+  local dir = ensureDataDir()
+  if not dir then
+    return
+  end
+  local pidFile = dir .. "/capture-picker-pid"
+  if noctalia.fileExists(pidFile) then
+    local pid = noctalia.readFile(pidFile)
+    if pid and pid ~= "" then
+      noctalia.runAsync({ "pkill", "-P", pid })
+      noctalia.runAsync({ "kill", pid })
+    end
+    noctalia.removeFile(pidFile)
+  end
+end
+
 local function notifySaved(file)
   if not file or file == "" then
     return
@@ -78,7 +101,7 @@ local function notifySaved(file)
     noctalia.tr("notify.saved_hint") .. "\n" .. file
   )
   if cfg("copy_to_clipboard") == true then
-    noctalia.copyToClipboard("file://" .. file, "text/uri-list")
+    noctalia.copyToClipboard(fileUri(file), "text/uri-list")
   end
 end
 
@@ -332,7 +355,7 @@ local function stop()
   -- cannot cancel it. Kill slurp: the picker exits non-zero and resolveTarget
   -- sees the cancel. Bumping the generation drops the in-flight picker.
   if state == "selecting" then
-    noctalia.runAsync({ "pkill", "-x", "slurp" })
+    cancelPicker()
     generation = generation + 1
     setState("idle")
     return
@@ -428,10 +451,15 @@ function update()
     return
   end
 
+  local queriedState = state
+  local queriedGen = generation
   local started = noctalia.runAsync({ recordScript(), "status" }, function(result)
     recorder = nil
+    if queriedGen ~= generation or state ~= queriedState then
+      return
+    end
     local reported = (result.stdout or ""):match("state=([%w_]+)")
-    if reported == "recording" then
+    if reported == "recording" or reported == "starting" then
       return
     end
     if state == "recording" then
@@ -456,7 +484,7 @@ function onExit()
   -- running with nothing left to stop it.
   generation = generation + 1
   if state == "selecting" then
-    noctalia.runAsync({ "pkill", "-x", "slurp" })
+    cancelPicker()
   end
   if state == "recording" or state == "starting" then
     -- Detached, so finalizing is not cut off by runAsync's 60s clamp.

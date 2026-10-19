@@ -401,8 +401,17 @@ finalize_recording() {
   args+=(-i "$latest" -c:v copy)
 
   if [[ $NORMALIZE_AUDIO == true ]]; then
-    if ffprobe -v error -select_streams a -show_entries stream=codec_type \
-      -of csv=p=0 "$latest" 2>/dev/null | grep -q audio; then
+    local probe_out=""
+    local probe_rc=0
+    probe_out=$(ffprobe -v error -select_streams a -show_entries stream=codec_type \
+      -of csv=p=0 "$latest" 2>&1) || probe_rc=$?
+
+    if [[ $probe_rc -ne 0 ]]; then
+      log "audio probe failed, preserving original recording"
+      return
+    fi
+
+    if grep -q audio <<< "$probe_out"; then
       args+=(-c:a aac -ar 48000 -af
         "volume=enable='lt(t,0.4)':volume=0,afade=t=in:st=0.4:d=0.05,loudnorm=I=-14:TP=-1.5:LRA=11")
     else
