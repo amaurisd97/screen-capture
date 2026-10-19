@@ -42,8 +42,8 @@ if ! client=$(hyprctl clients -j 2>/dev/null |
   exit 0
 fi
 
-read -r address current_width current_height monitor_id is_floating < <(
-  jq -r '[.address, .size[0], .size[1], .monitor, .floating] | @tsv' <<<"$client"
+read -r address current_width current_height monitor_id is_floating is_pinned < <(
+  jq -r '[.address, .size[0], .size[1], .monitor, .floating, .pinned] | @tsv' <<<"$client"
 )
 
 [[ -n $address && $current_width =~ ^[0-9]+$ && $current_height =~ ^[0-9]+$ &&
@@ -85,13 +85,24 @@ if [[ -f $REGION_FILE ]] && region=$(<"$REGION_FILE"); then
   fi
 fi
 
+# The overlay has to stay inside the region even when the region is small: a
+# fixed margin does not fit a 60px-wide capture, so shrink it before sizing.
+margin=$MARGIN
+((anchor_width / 4 < margin)) && margin=$((anchor_width / 4))
+((anchor_height / 4 < margin)) && margin=$((anchor_height / 4))
+((margin < 1)) && margin=1
+
 # A tall, narrow region cannot fit presets scaled from its own height, so cap
 # the height they scale from to what the width allows. The large preset is the
 # widest at 3/10 of it; scaling the whole ladder keeps small, medium and large
 # distinct sizes for smaller/larger to step between.
 scale_height=$anchor_height
-available_width=$((anchor_width - 2 * MARGIN))
-((available_width > 0 && scale_height * 3 / 10 > available_width)) &&
+available_width=$((anchor_width - 2 * margin))
+if ((available_width <= 0)); then
+  available_width=$((anchor_width / 3))
+  ((available_width < 1)) && available_width=1
+fi
+((scale_height * 3 / 10 > available_width)) &&
   scale_height=$((available_width * 10 / 3))
 
 # 8:9 portrait presets scaled from that height.
@@ -143,11 +154,11 @@ larger)
   ;;
 esac
 
-target_x=$((anchor_x + anchor_width - target_width - MARGIN))
-target_y=$((anchor_y + anchor_height - target_height - MARGIN))
+target_x=$((anchor_x + anchor_width - target_width - margin))
+target_y=$((anchor_y + anchor_height - target_height - margin))
 
-((target_x < anchor_x + MARGIN)) && target_x=$((anchor_x + MARGIN))
-((target_y < anchor_y + MARGIN)) && target_y=$((anchor_y + MARGIN))
+((target_x < anchor_x + margin)) && target_x=$((anchor_x + margin))
+((target_y < anchor_y + margin)) && target_y=$((anchor_y + margin))
 
 window="address:$address"
 
@@ -174,5 +185,9 @@ hypr_dispatch \
   "hl.dsp.window.move({ window = \"$window\", x = $target_x, y = $target_y })" \
   movewindowpixel "exact $target_x $target_y,$window"
 
-hyprctl dispatch "hl.dsp.window.pin({ window = \"$window\" })" >/dev/null 2>&1 ||
-  hyprctl dispatch pin "$window" >/dev/null 2>&1
+# The classic fallback is a toggle, so re-pinning an already-pinned window would
+# unpin it. The Lua form sets the state, but guard both for the same reason.
+if [[ $is_pinned != true ]]; then
+  hyprctl dispatch "hl.dsp.window.pin({ window = \"$window\" })" >/dev/null 2>&1 ||
+    hyprctl dispatch pin "$window" >/dev/null 2>&1
+fi

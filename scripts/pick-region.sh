@@ -37,7 +37,7 @@ JQ_MONITOR_GEO='
     (.width / .scale | floor) as $w |
     (.height / .scale | floor) as $h |
     .transform as $t |
-    if $t == 1 or $t == 3 then
+    if ($t % 2) == 1 then
       "\($x),\($y) \($h)x\($w)"
     else
       "\($x),\($y) \($w)x\($h)"
@@ -283,22 +283,13 @@ smart | *)
   # multi-display layouts.
   if [[ $SELECTION =~ ^(-?[0-9]+),(-?[0-9]+)[[:space:]]([0-9]+)x([0-9]+)$ ]] &&
     ((BASH_REMATCH[3] * BASH_REMATCH[4] < 20)); then
-    click_x=${BASH_REMATCH[1]}
-    click_y=${BASH_REMATCH[2]}
-
-    while IFS= read -r rect; do
-      [[ $rect =~ ^(-?[0-9]+),(-?[0-9]+)[[:space:]]([0-9]+)x([0-9]+)$ ]] || continue
-      rect_x=${BASH_REMATCH[1]}
-      rect_y=${BASH_REMATCH[2]}
-      rect_width=${BASH_REMATCH[3]}
-      rect_height=${BASH_REMATCH[4]}
-
-      if ((click_x >= rect_x && click_x < rect_x + rect_width &&
-        click_y >= rect_y && click_y < rect_y + rect_height)); then
-        SELECTION="${rect_x},${rect_y} ${rect_width}x${rect_height}"
-        break
-      fi
-    done <<<"$RECTS"
+    # resolve_rect_at keeps the smallest containing rectangle, so a click over a
+    # window resolves to the window rather than the monitor behind it. The
+    # rectangle list is monitors first, and a first-match loop would take the
+    # monitor every time.
+    if resolve_rect_at "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" <<<"$RECTS"; then
+      SELECTION=$RESOLVED_RECT
+    fi
   fi
   ;;
 esac
