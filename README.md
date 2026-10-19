@@ -18,9 +18,9 @@ Install these commands on `PATH`. Every one is declared in `plugin.toml`:
 - `gpu-screen-recorder` — the recorder.
 - `slurp` — interactive region and window picker.
 - `jq` — parses the `hyprctl` JSON.
-- `hyprctl` — resolves monitors, windows and drives the webcam overlay.
+- `hyprctl` — resolves monitors and windows and drives the webcam overlay.
+- `hyprpicker` — freezes the screen while you drag the region.
 - `ffmpeg` — trims the opening frame, normalizes audio and builds the preview.
-- `pactl` — checks the audio devices before a recording starts.
 - `flock` — serializes start and stop.
 
 For the webcam overlay: `mpv` (renders the camera) and `v4l2-ctl` (picks a
@@ -137,8 +137,8 @@ are thin clients that only mirror state.
 - Writes run state, the log and the notification preview next to
   `$XDG_RUNTIME_DIR/screen-capture` (overridable with
   `SCREEN_CAPTURE_RUNTIME_DIR`).
-- Spawns `gpu-screen-recorder`, `slurp`, `hyprctl`, `jq`, `ffmpeg`, `pactl` and
-  `flock`; with the webcam, `mpv` and `v4l2-ctl`.
+- Spawns `gpu-screen-recorder`, `slurp`, `hyprctl`, `hyprpicker`, `jq`,
+  `ffmpeg` and `flock`; with the webcam, `mpv` and `v4l2-ctl`.
 - Makes no network calls.
 
 ### Why not the portal
