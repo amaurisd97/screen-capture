@@ -35,6 +35,10 @@ FRAMERATE_MODE="cfr"
 QUALITY="high"
 SHOW_CURSOR=true
 NORMALIZE_AUDIO=true
+# Whether the caller passed --normalize on this invocation. `stop` runs in its
+# own process, so the run's choice is persisted to NORMALIZE_FILE and only an
+# explicit flag overrides it.
+NORMALIZE_EXPLICIT=false
 WEBCAM="off"
 WEBCAM_DEVICE=""
 TARGET=""
@@ -42,7 +46,7 @@ RESOLUTION=""
 
 # The runtime directory is per-user and 0700. What RECORDING_FILE holds is read
 # back on stop and used as a path: ffmpeg writes beside it, mv replaces it, and
-# rm deletes the preview. A fixed name in world-writable /tmp would be a name
+# rm deletes it on a failed start. A fixed name in world-writable /tmp would be a name
 # any other local account could create first and point wherever it likes.
 #
 # SCREEN_CAPTURE_RUNTIME_DIR redirects only this plugin's own state, so tests can
@@ -55,6 +59,7 @@ REC_PID_FILE="$RUNTIME_DIR/capture-pid"
 WEBCAM_PID_FILE="$RUNTIME_DIR/capture-webcam-pid"
 STARTING_FILE="$RUNTIME_DIR/capture-starting"
 CANCEL_FILE="$RUNTIME_DIR/capture-cancel"
+NORMALIZE_FILE="$RUNTIME_DIR/capture-normalize"
 
 # How long a recorder may take to create its file. The picker is not counted:
 # it waits on the user.
@@ -85,8 +90,8 @@ for arg in "$@"; do
   --quality=*) QUALITY="${arg#*=}" ;;
   --cursor=yes) SHOW_CURSOR=true ;;
   --cursor=no) SHOW_CURSOR=false ;;
-  --normalize=yes) NORMALIZE_AUDIO=true ;;
-  --normalize=no) NORMALIZE_AUDIO=false ;;
+  --normalize=yes) NORMALIZE_AUDIO=true; NORMALIZE_EXPLICIT=true ;;
+  --normalize=no) NORMALIZE_AUDIO=false; NORMALIZE_EXPLICIT=true ;;
   --webcam=*) WEBCAM="${arg#*=}" ;;
   --webcam-device=*) WEBCAM_DEVICE="${arg#*=}" ;;
   --target=*) TARGET="${arg#*=}" ;;
@@ -113,6 +118,12 @@ medium | high | very_high | ultra) ;;
   exit 2
   ;;
 esac
+
+# `stop` runs in its own process; restore the choice the run started with unless
+# the caller passed an explicit --normalize on this invocation.
+if [[ $ACTION == "stop" && $NORMALIZE_EXPLICIT == false && -r $NORMALIZE_FILE ]]; then
+  [[ $(<"$NORMALIZE_FILE") == "no" ]] && NORMALIZE_AUDIO=false
+fi
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -238,6 +249,12 @@ start_recording() {
     start_cancelled && return 1
   fi
 
+  # pick-region.sh prints "X,Y WxH" for a rectangle; accept that form directly
+  # so the standalone `record.sh start` path does not need the caller to convert.
+  if [[ $TARGET =~ ^(-?[0-9]+),(-?[0-9]+)[[:space:]]([0-9]+)x([0-9]+)$ ]]; then
+    TARGET="region:${BASH_REMATCH[3]}x${BASH_REMATCH[4]}+${BASH_REMATCH[1]}+${BASH_REMATCH[2]}"
+  fi
+
   log "target: $TARGET"
 
   case $TARGET in
@@ -267,8 +284,16 @@ start_recording() {
     return 1
   }
 
-  local filename
-  filename="$OUTPUT_DIR/$(date +"$FILENAME_PATTERN").mp4"
+  # A custom pattern may omit seconds, so two runs can land on the same name and
+  # gpu-screen-recorder would overwrite the earlier file. Suffix until it is
+  # free; after this the failure paths below can safely rm what they created.
+  local filename base suffix=0
+  base="$OUTPUT_DIR/$(date +"$FILENAME_PATTERN")"
+  filename="$base.mp4"
+  while [[ -e $filename ]]; do
+    ((suffix++))
+    filename="$base-$suffix.mp4"
+  done
 
   local audio_devices="" audio_args=()
   [[ $AUDIO_SOURCE == "default_output" || $AUDIO_SOURCE == "both" ]] &&
@@ -327,6 +352,12 @@ start_recording() {
   # recorder is alive, so the recording is real and the name is worth saving.
   echo "$pid" >"$REC_PID_FILE"
   echo "$filename" >"$RECORDING_FILE"
+  # Persist the run's audio choice for the separate `stop` process.
+  if [[ $NORMALIZE_AUDIO == true ]]; then
+    echo yes >"$NORMALIZE_FILE"
+  else
+    echo no >"$NORMALIZE_FILE"
+  fi
   return 0
 }
 
@@ -352,7 +383,9 @@ end_recorder() {
 
 # Trim the opening frame and normalize loudness in a single pass.
 #
-# The first 400ms are hard-muted: PipeWire's capture open produces a
+# The trim drops the PipeWire transient the mute/fade below also target, so it
+# belongs to the normalize pass: with normalize off the file is copied as-is.
+# The first 400ms are hard-muted because PipeWire's capture open produces a
 # near-clipping transient around 130-200ms that no gentle fade-in can attenuate
 # enough. The 50ms fade then avoids a click at the boundary. loudnorm declares
 # 192kHz output, so without -ar the encoder writes 96kHz from a 48kHz recording.
@@ -361,7 +394,11 @@ finalize_recording() {
   latest=$(cat "$RECORDING_FILE" 2>/dev/null)
   [[ -f $latest ]] || return
 
-  local args=(-y -ss 0.1 -i "$latest" -c:v copy)
+  local args=(-y)
+  if [[ $NORMALIZE_AUDIO == true ]]; then
+    args+=(-ss 0.1)
+  fi
+  args+=(-i "$latest" -c:v copy)
 
   if [[ $NORMALIZE_AUDIO == true ]]; then
     if ffprobe -v error -select_streams a -show_entries stream=codec_type \
@@ -382,8 +419,9 @@ finalize_recording() {
 }
 
 stop_recording() {
-  local pid
-  pid=$(<"$REC_PID_FILE")
+  local pid filename
+  pid=""
+  [[ -r $REC_PID_FILE ]] && pid=$(<"$REC_PID_FILE")
 
   if recorder_pid_alive "$pid"; then
     end_recorder "$pid"
@@ -391,30 +429,14 @@ stop_recording() {
 
   cleanup_webcam
 
-  # Generate the preview from the raw file through an open descriptor, before
-  # finalize renames its output over it.
-  local filename preview raw_fd="" preview_pid=""
   filename=$(cat "$RECORDING_FILE" 2>/dev/null)
 
   if [[ -n $filename && -f $filename ]]; then
-    preview="${filename%.mp4}-preview.png"
-    if exec {raw_fd}<"$filename"; then
-      ffmpeg -y -ss 0.2 -i "/proc/self/fd/$raw_fd" -vframes 1 -q:v 2 "$preview" \
-        -loglevel quiet 2>/dev/null &
-      preview_pid=$!
-    fi
-
     finalize_recording
-
-    if [[ -n $preview_pid ]]; then
-      wait "$preview_pid"
-      exec {raw_fd}<&-
-      [[ -f $preview ]] && echo "preview=$preview"
-    fi
     echo "file=$filename"
   fi
 
-  rm -f "$RECORDING_FILE" "$REC_PID_FILE"
+  rm -f "$RECORDING_FILE" "$REC_PID_FILE" "$NORMALIZE_FILE"
 }
 
 # A pid left behind by a recording that ended without a stop would hide the next
@@ -438,7 +460,9 @@ status)
     [[ -f $RECORDING_FILE ]] && echo "file=$(cat "$RECORDING_FILE")"
     exit 0
   fi
-  rm -f "$REC_PID_FILE"
+  # Never delete the pid file here: a start can write a fresh pid between the
+  # liveness check and the rm, which would leave the new recorder untracked. A
+  # stale pid is harmless because recording_active() re-checks the executable.
   if [[ -e $STARTING_FILE ]]; then
     echo "state=starting"
     exit 0
@@ -452,14 +476,11 @@ start | stop)
   # can never stall behind it.
   exec 9>>"$RUNTIME_DIR/capture.lock"
 
-  if [[ $ACTION == status ]]; then
-    flock -n 9
-    exit 0
-  fi
-
   if ! flock -w 1 9; then
     touch "$CANCEL_FILE"
-    local starter=""
+    # Script scope, so this is a plain assignment: `local` outside a function
+    # fails, leaves the variable unset, and `set -u` then aborts the script.
+    starter=""
     [[ -r $STARTING_FILE ]] && starter=$(<"$STARTING_FILE")
     if [[ $starter =~ ^[0-9]+$ ]] && kill -0 "$starter" 2>/dev/null; then
       exit 0
@@ -490,12 +511,17 @@ start | stop)
     echo "file=$(cat "$RECORDING_FILE" 2>/dev/null)"
     # A stop that landed between the last check and here still counts.
     if start_cancelled; then
-      local pid
-      pid=$(<"$REC_PID_FILE" 2>/dev/null)
+      # Script scope, so no `local`. Read guarded files without `$(<f 2>/dev/null)`:
+      # that form silently yields an empty string, which is how the recorder was
+      # left running and its pid file removed underneath it.
+      pid=""
+      [[ -r $REC_PID_FILE ]] && pid=$(<"$REC_PID_FILE")
       [[ $pid =~ ^[0-9]+$ ]] && end_recorder "$pid"
       cleanup_webcam
-      rm -f "$(<"$RECORDING_FILE" 2>/dev/null)" "$REC_PID_FILE" "$RECORDING_FILE"
-      rm -f "$STARTING_FILE" "$CANCEL_FILE"
+      file=""
+      [[ -r $RECORDING_FILE ]] && file=$(<"$RECORDING_FILE")
+      [[ -n $file ]] && rm -f "$file"
+      rm -f "$REC_PID_FILE" "$RECORDING_FILE" "$NORMALIZE_FILE" "$STARTING_FILE" "$CANCEL_FILE"
       echo "state=idle"
       exit 1
     fi
