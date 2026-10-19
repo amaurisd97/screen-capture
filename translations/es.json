@@ -1,12 +1,12 @@
 {
   "notify": {
     "failed": "Falló la grabación",
-    "failedHint": "No se generó archivo. Mirá el log de screen-capture para ver la salida del grabador.",
-    "launchFailed": "No se pudo lanzar el proceso grabador.",
-    "noMonitor": "El compositor no reportó ningún monitor enfocado.",
-    "noWindow": "Ninguna ventana coincide con esa dirección.",
+    "failed_hint": "No se generó archivo. Mirá el log de screen-capture para ver la salida del grabador.",
+    "launch_failed": "No se pudo lanzar el proceso grabador.",
+    "no_monitor": "El compositor no reportó ningún monitor enfocado.",
+    "no_window": "Ninguna ventana coincide con esa dirección.",
     "saved": "Grabación guardada",
-    "savedHint": "Abrí el archivo con la acción de abajo."
+    "saved_hint": "Abrí el archivo con la acción de abajo."
   },
   "panel": {
     "cancel": "Cancelar",

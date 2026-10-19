@@ -1,12 +1,12 @@
 {
   "notify": {
     "failed": "Recording failed",
-    "failedHint": "No file was produced. See the screen-capture log for the recorder's own output.",
-    "launchFailed": "The recorder process could not be launched.",
-    "noMonitor": "No focused monitor was reported by the compositor.",
-    "noWindow": "No window matched that direction.",
+    "failed_hint": "No file was produced. See the screen-capture log for the recorder's own output.",
+    "launch_failed": "The recorder process could not be launched.",
+    "no_monitor": "No focused monitor was reported by the compositor.",
+    "no_window": "No window matched that direction.",
     "saved": "Recording saved",
-    "savedHint": "Open the file with the action below."
+    "saved_hint": "Open the file with the action below."
   },
   "panel": {
     "cancel": "Cancel",

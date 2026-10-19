@@ -65,7 +65,7 @@ local function notifySaved(file, preview)
   end
   noctalia.notify(
     noctalia.tr("notify.saved"),
-    noctalia.tr("notify.savedHint") .. "\n" .. file,
+    noctalia.tr("notify.saved_hint") .. "\n" .. file,
     preview ~= "" and preview or nil
   )
   if cfg("copy_to_clipboard") == true then
@@ -150,7 +150,7 @@ local function resolveTarget(chosen, onDone)
       if monitor and monitor ~= "" then
         onDone(string.format("monitor:%s", monitor))
       else
-        noctalia.notifyError(noctalia.tr("notify.failed"), noctalia.tr("notify.noMonitor"))
+        noctalia.notifyError(noctalia.tr("notify.failed"), noctalia.tr("notify.no_monitor"))
         onDone(nil)
       end
     end)
@@ -198,13 +198,13 @@ local function launch(chosen, target)
     else
       outputPath = ""
       setState("idle")
-      noctalia.notifyError(noctalia.tr("notify.failed"), noctalia.tr("notify.failedHint"))
+      noctalia.notifyError(noctalia.tr("notify.failed"), noctalia.tr("notify.failed_hint"))
     end
   end, 120000)
 
   if not started then
     setState("idle")
-    noctalia.notifyError(noctalia.tr("notify.failed"), noctalia.tr("notify.launchFailed"))
+    noctalia.notifyError(noctalia.tr("notify.failed"), noctalia.tr("notify.launch_failed"))
   end
 end
 

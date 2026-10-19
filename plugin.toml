@@ -13,7 +13,7 @@
 id = "amaurisd/screen-capture"
 name = "Screen Capture"
 version = "0.1.0"
-plugin_api = 17
+plugin_api = 24
 author = "amaurisd"
 license = "MIT"
 dependencies = ["gpu-screen-recorder", "slurp", "jq", "hyprctl", "ffmpeg", "pactl", "flock"]
