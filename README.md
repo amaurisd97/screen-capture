@@ -7,7 +7,7 @@ audio and a webcam overlay, from a Noctalia bar or the Control Center.
 
 | Field | Value |
 | --- | --- |
-| ID | `amaurisd/screen-capture` |
+| ID | `amaurisd97/screen-capture` |
 | Entries | Bar widget: `widget`; Control Center shortcut: `toggle`; panel: `menu`; service: `service` |
 | Tags | recording, video, utility |
 
@@ -49,7 +49,7 @@ you may need to make room).
 The panel is a normal Noctalia surface and can also be opened with:
 
 ```sh
-noctalia msg panel-toggle amaurisd/screen-capture:menu
+noctalia msg panel-toggle amaurisd97/screen-capture:menu
 ```
 
 ### Capture targets
@@ -103,14 +103,14 @@ Audio and webcam are chosen per run in the menu; `audio_source` and
 The service answers external IPC:
 
 ```sh
-noctalia msg plugin amaurisd/screen-capture:service all toggle
-noctalia msg plugin amaurisd/screen-capture:service all start
-noctalia msg plugin amaurisd/screen-capture:service all start region
-noctalia msg plugin amaurisd/screen-capture:service all start window
-noctalia msg plugin amaurisd/screen-capture:service all start fullscreen
-noctalia msg plugin amaurisd/screen-capture:service all record-last
-noctalia msg plugin amaurisd/screen-capture:service all record-fullscreen
-noctalia msg plugin amaurisd/screen-capture:service all stop
+noctalia msg plugin amaurisd97/screen-capture:service all toggle
+noctalia msg plugin amaurisd97/screen-capture:service all start
+noctalia msg plugin amaurisd97/screen-capture:service all start region
+noctalia msg plugin amaurisd97/screen-capture:service all start window
+noctalia msg plugin amaurisd97/screen-capture:service all start fullscreen
+noctalia msg plugin amaurisd97/screen-capture:service all record-last
+noctalia msg plugin amaurisd97/screen-capture:service all record-fullscreen
+noctalia msg plugin amaurisd97/screen-capture:service all stop
 ```
 
 `start <source>` overrides the capture source for that run; any other value uses

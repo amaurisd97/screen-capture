@@ -10,11 +10,11 @@
 # argument") and is off by default upstream for the same reason. Region and
 # monitor capture go straight to the compositor instead.
 
-id = "amaurisd/screen-capture"
+id = "amaurisd97/screen-capture"
 name = "Screen Capture"
 version = "0.1.0"
 plugin_api = 24
-author = "amaurisd"
+author = "amaurisd97"
 license = "MIT"
 dependencies = ["gpu-screen-recorder", "slurp", "jq", "hyprctl", "ffmpeg", "pactl", "flock"]
 tags = ["recording", "video", "utility"]

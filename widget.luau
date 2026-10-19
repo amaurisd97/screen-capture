@@ -10,7 +10,7 @@ local state = "idle"
 local available = true
 local outputPath = ""
 
-local PANEL_ID = "amaurisd/screen-capture:menu"
+local PANEL_ID = "amaurisd97/screen-capture:menu"
 
 local function send(action)
   noctalia.state.set("command", {

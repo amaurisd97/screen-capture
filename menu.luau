@@ -7,7 +7,7 @@
 -- service and closes itself so nothing of the menu is captured.
 --
 -- Open it from the bar widget / Control Center tile (left click), or with
--- `noctalia msg panel-toggle amaurisd/screen-capture:menu`.
+-- `noctalia msg panel-toggle amaurisd97/screen-capture:menu`.
 
 -- Values are stable ids, matched to the localized labels by index; the service
 -- validates them again. Never derive a value from the displayed text.
