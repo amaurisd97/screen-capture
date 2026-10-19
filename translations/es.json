@@ -1,0 +1,115 @@
+{
+  "notify": {
+    "failed": "Falló la grabación",
+    "failedHint": "No se generó archivo. Mirá el log de screen-capture para ver la salida del grabador.",
+    "launchFailed": "No se pudo lanzar el proceso grabador.",
+    "noMonitor": "El compositor no reportó ningún monitor enfocado.",
+    "noWindow": "Ninguna ventana coincide con esa dirección.",
+    "saved": "Grabación guardada",
+    "savedHint": "Abrí el archivo con la acción de abajo."
+  },
+  "panel": {
+    "cancel": "Cancelar",
+    "record": "Grabar",
+    "audio": {
+      "label": "Audio"
+    },
+    "source": {
+      "label": "Qué grabar",
+      "region": "Región",
+      "window": "Aplicación (ventana)",
+      "fullscreen": "Pantalla completa"
+    },
+    "title": "Grabar pantalla",
+    "webcam": {
+      "label": "Grabar con cámara"
+    }
+  },
+  "plugin_name": "Screen Capture",
+  "settings": {
+    "audio_source": {
+      "description": "Flujo de audio a grabar",
+      "label": "Fuente de audio",
+      "options": {
+        "both": "Salida del sistema + micrófono",
+        "default_input": "Micrófono",
+        "default_output": "Salida del sistema (escritorio)",
+        "none": "Sin audio"
+      }
+    },
+    "copy_to_clipboard": {
+      "description": "Copia el path file:// al portapapeles al terminar",
+      "label": "Copiar URL del archivo"
+    },
+    "directory": {
+      "description": "Directorio donde se guardan las grabaciones",
+      "label": "Directorio"
+    },
+    "filename_pattern": {
+      "description": "Formato strftime para el nombre de archivo",
+      "label": "Patrón de nombre"
+    },
+    "frame_rate": {
+      "description": "Fotogramas por segundo objetivo",
+      "label": "Tasa de cuadros"
+    },
+    "framerate_mode": {
+      "description": "cfr mantiene una tasa constante y es lo que piden los editores; vfr solo guarda cuadros cuando la pantalla cambia",
+      "label": "Modo de cuadros",
+      "options": {
+        "cfr": "Cuadros por segundo constante",
+        "vfr": "Variable"
+      }
+    },
+    "hide_inactive": {
+      "description": "Oculta el widget de la barra cuando no está grabando",
+      "label": "Ocultar cuando está inactivo"
+    },
+    "normalize_audio": {
+      "description": "Ajusta el volumen a -14 LUFS, silencia el primer 400ms y corta el primer fotograma",
+      "label": "Normalizar audio"
+    },
+    "quality": {
+      "description": "gpu-screen-recorder solo acepta estos valores con nombre; con esta GPU únicamente h264 y hevc codifican por hardware",
+      "label": "Calidad",
+      "options": {
+        "high": "Alta",
+        "medium": "Media",
+        "ultra": "Ultra",
+        "very_high": "Muy alta"
+      }
+    },
+    "show_cursor": {
+      "description": "Incluye el cursor del mouse en la grabación",
+      "label": "Mostrar cursor"
+    },
+    "webcam_device": {
+      "description": "Vacío usa la primera cámara disponible, por ejemplo /dev/video0",
+      "label": "Dispositivo de cámara"
+    },
+    "webcam_size": {
+      "description": "Tamaño del cuadro de cámara, escalado desde la región grabada",
+      "label": "Tamaño de la cámara",
+      "options": {
+        "large": "Grande",
+        "medium": "Mediano",
+        "small": "Chico"
+      }
+    }
+  },
+  "shortcut": {
+    "idle": "Grabar región",
+    "recording": "Detener grabación",
+    "selecting": "Seleccionando...",
+    "starting": "Iniciando...",
+    "stopping": "Finalizando..."
+  },
+  "widget": {
+    "idle": "Screen Capture: hacé clic para abrir el menú de grabación",
+    "recording": "Screen Capture: grabando. Clic para detener.",
+    "selecting": "Screen Capture: elegí una región o hacé clic en una ventana",
+    "starting": "Screen Capture: iniciando el grabador",
+    "stopping": "Screen Capture: finalizando el archivo",
+    "unavailable": "Screen Capture: falta gpu-screen-recorder o slurp"
+  }
+}

@@ -1,0 +1,11 @@
+# Runtime artifacts from testing the scripts by hand.
+*.log
+*.mp4
+*.png
+*.ts
+
+# Editor / OS noise.
+.DS_Store
+*.swp
+.idea/
+.vscode/
