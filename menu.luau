@@ -125,7 +125,7 @@ function onAudio(index, _text)
 end
 
 function onWebcam(value)
-  webcam = value == "true"
+  webcam = value == true or tostring(value) == "true"
   render()
 end
 

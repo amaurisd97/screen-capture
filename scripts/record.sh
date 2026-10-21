@@ -141,7 +141,7 @@ recorder_pid_alive() {
 # The focused monitor at its own resolution, or 4K when the monitor is larger,
 # so a 5K or 6K panel does not ask the encoder for more than it can hold.
 default_resolution() {
-  local width height
+  local width=0 height=0
   read -r width height < <(hyprctl monitors -j |
     jq -r '.[] | select(.focused == true) | "\(.width) \(.height)"')
   if ((width > 3840 || height > 2160)); then
@@ -149,10 +149,6 @@ default_resolution() {
   else
     echo "0x0"
   fi
-}
-
-focused_monitor() {
-  hyprctl monitors -j | jq -r '.[] | select(.focused == true) | .name' | head -1
 }
 
 # ── webcam overlay ────────────────────────────────────────────────────────────
@@ -419,8 +415,8 @@ finalize_recording() {
     fi
   fi
 
-     local processed
-     processed=$(mktemp "${latest%.mp4}-processed.XXXXXX.mp4") || return 1
+  local processed
+  processed=$(mktemp "${latest%.mp4}-processed.XXXXXX.mp4") || return 1
   if ffmpeg "${args[@]}" "$processed" -loglevel quiet 2>/dev/null; then
     mv "$processed" "$latest"
   else
@@ -474,8 +470,15 @@ status)
   # liveness check and the rm, which would leave the new recorder untracked. A
   # stale pid is harmless because recording_active() re-checks the executable.
   if [[ -e $STARTING_FILE ]]; then
-    echo "state=starting"
-    exit 0
+    starter=""
+    [[ -r $STARTING_FILE ]] && starter=$(<"$STARTING_FILE")
+    # A start that died on its own (or was killed) would otherwise report
+    # "starting" forever. The file is left in place: a new start overwrites it,
+    # and deleting it here could race one that just wrote a fresh pid.
+    if [[ $starter =~ ^[0-9]+$ ]] && kill -0 "$starter" 2>/dev/null; then
+      echo "state=starting"
+      exit 0
+    fi
   fi
   echo "state=idle"
   exit 0
@@ -493,8 +496,15 @@ start | stop)
     starter=""
     [[ -r $STARTING_FILE ]] && starter=$(<"$STARTING_FILE")
     if [[ $starter =~ ^[0-9]+$ ]] && kill -0 "$starter" 2>/dev/null; then
+      # The start may be waiting on its picker. Dismiss it so "cancel" is
+      # immediate instead of waiting for the user to choose something the
+      # CANCEL_FILE will then throw away.
+      "$PICK_SCRIPT" --cancel
       exit 0
     fi
+    # The start is gone, but its picker inherits the lock and can keep holding
+    # it. Dismiss that too before waiting for the lock to be released.
+    "$PICK_SCRIPT" --cancel
     flock 9 || exit 1
     [[ -e $CANCEL_FILE ]] || exit 0
     rm -f "$CANCEL_FILE"

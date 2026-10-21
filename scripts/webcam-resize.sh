@@ -42,6 +42,7 @@ if ! client=$(hyprctl clients -j 2>/dev/null |
   exit 0
 fi
 
+address="" current_width=0 current_height=0 monitor_id="" is_floating="" is_pinned=""
 read -r address current_width current_height monitor_id is_floating is_pinned < <(
   jq -r '[.address, .size[0], .size[1], .monitor, .floating, .pinned] | @tsv' <<<"$client"
 )

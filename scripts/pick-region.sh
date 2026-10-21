@@ -17,6 +17,13 @@
 #
 #   --match-monitor    print monitor:NAME when the selection matches a monitor
 #   --keep-freeze      leave the screen freeze running, print its pid first
+#   --take-fullscreen  dismiss the open picker, take the focused monitor
+#   --take-window      dismiss the open picker, take the rectangle under the cursor
+#   --cancel           stop the picker this plugin owns, if any
+#
+# --take-* and --cancel signal only the slurp this plugin started, which is
+# tracked through capture-picker-pid and capture-slurp-pid. They never match
+# slurp by name, so another tool's selection is left running.
 #
 # The portal is deliberately not involved: it cannot pick a window on Wayland
 # through gpu-screen-recorder, and its dmabuf path fails here anyway.
@@ -29,6 +36,10 @@ set -uo pipefail
 RUNTIME_DIR="${SCREEN_CAPTURE_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/screen-capture}"
 FULLSCREEN_MARKER="$RUNTIME_DIR/pick-fullscreen"
 WINDOW_MARKER="$RUNTIME_DIR/pick-window"
+PICKER_PID_FILE="$RUNTIME_DIR/capture-picker-pid"
+SLURP_PID_FILE="$RUNTIME_DIR/capture-slurp-pid"
+SLURP_OUTPUT="$RUNTIME_DIR/pick-selection"
+SLURP_INPUT="$RUNTIME_DIR/pick-rectangles"
 
 # Monitors rotated 90/270 swap their logical width and height.
 JQ_MONITOR_GEO='
@@ -45,10 +56,9 @@ JQ_MONITOR_GEO='
 '
 
 mkdir -p "$RUNTIME_DIR" || exit 1
-
-PICKER_PID_FILE="$RUNTIME_DIR/capture-picker-pid"
-echo $$ > "$PICKER_PID_FILE"
-trap 'rm -f "$PICKER_PID_FILE"' EXIT
+if [[ -z ${XDG_RUNTIME_DIR:-} ]]; then
+  chmod 700 "$RUNTIME_DIR" || exit 1
+fi
 
 active_workspace() {
   hyprctl monitors -j | jq -r '.[] | select(.focused == true) .activeWorkspace.id'
@@ -115,20 +125,118 @@ geo_at_cursor() {
   fi
 }
 
-# Keyboard control while slurp is open. The --take-* modes flag their intent
-# with a marker file and dismiss slurp; slurp then exits with no selection,
-# which is how we tell "dismissed on purpose" from "cancelled by the user".
+# ── ownership ─────────────────────────────────────────────────────────────────
+
+# A pid file can outlive its process and the number can be reused, so check what
+# is actually running there before signalling it. For a script run through its
+# shebang, /proc/<pid>/cmdline starts with the interpreter and then the script.
+process_is_picker() {
+  local pid=$1 comm="" arg
+  [[ $pid =~ ^[0-9]+$ ]] || return 1
+  read -r comm <"/proc/$pid/comm" 2>/dev/null || true
+  [[ $comm == "pick-region.sh" ]] && return 0
+  while IFS= read -r -d '' arg; do
+    [[ ${arg##*/} == "pick-region.sh" ]] && return 0
+  done <"/proc/$pid/cmdline" 2>/dev/null
+  return 1
+}
+
+owned_picker_pid() {
+  local pid
+  [[ -r $PICKER_PID_FILE ]] || return 1
+  pid=$(<"$PICKER_PID_FILE")
+  process_is_picker "$pid" || return 1
+  printf '%s' "$pid"
+}
+
+process_ppid() {
+  local pid=$1 key value=""
+  while read -r key value; do
+    if [[ $key == "PPid:" ]]; then
+      printf '%s' "$value"
+      return 0
+    fi
+  done <"/proc/$pid/status" 2>/dev/null
+  return 1
+}
+
+process_is_slurp() {
+  local pid=$1 comm="" arg
+  [[ $pid =~ ^[0-9]+$ ]] || return 1
+  read -r comm <"/proc/$pid/comm" 2>/dev/null || true
+  [[ $comm == "slurp" ]] && return 0
+  while IFS= read -r -d '' arg; do
+    [[ ${arg##*/} == "slurp" ]] && return 0
+  done <"/proc/$pid/cmdline" 2>/dev/null
+  return 1
+}
+
+# slurp is started and waited on directly by this script, so the picker is its
+# parent. Checking the parent as well as the name keeps a stale pid file from
+# pointing at an unrelated slurp after a crash and a pid reuse.
+owned_slurp_pid() {
+  local picker pid=""
+  picker=$(owned_picker_pid) || return 1
+  [[ -r $SLURP_PID_FILE ]] || return 1
+  pid=$(<"$SLURP_PID_FILE")
+  process_is_slurp "$pid" || return 1
+  [[ $(process_ppid "$pid") == "$picker" ]] || return 1
+  printf '%s' "$pid"
+}
+
+# Remove a pid file only when it still names the process we are releasing, so a
+# slower helper cannot delete the file a newer picker just claimed.
+release_pid_file() {
+  local file=$1 pid=$2
+  [[ -r $file && $(<"$file") == "$pid" ]] && rm -f "$file"
+  return 0
+}
+
+# ── helper modes ──────────────────────────────────────────────────────────────
+#
+# These run while an interactive picker may already be open. They return before
+# the pid files are claimed below, so they never overwrite or remove ownership
+# that belongs to the running picker.
+
+# --cancel stops the picker this plugin owns. TERM first: the picker's trap stops
+# slurp and the freeze and removes its own files. If it is stuck somewhere the
+# trap cannot reach, the recorded slurp is stopped as well.
+if [[ ${1:-} == "--cancel" ]]; then
+  picker=$(owned_picker_pid) || exit 0
+  slurp=$(owned_slurp_pid) || slurp=""
+  kill "$picker" 2>/dev/null
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    kill -0 "$picker" 2>/dev/null || break
+    sleep 0.05
+  done
+  [[ -n $slurp ]] && kill "$slurp" 2>/dev/null
+  if ! kill -0 "$picker" 2>/dev/null; then
+    release_pid_file "$PICKER_PID_FILE" "$picker"
+    [[ -n $slurp ]] && release_pid_file "$SLURP_PID_FILE" "$slurp"
+  fi
+  exit 0
+fi
+
+# Keyboard control while slurp is open. The helper flags its intent with a marker
+# file and stops the owned slurp; slurp then exits with no selection, which is
+# how pick() tells "dismissed on purpose" from "cancelled by the user".
+take_target() {
+  local marker=$1 slurp
+  slurp=$(owned_slurp_pid) || return 1
+  touch "$marker" || return 1
+  if ! kill "$slurp" 2>/dev/null; then
+    rm -f "$marker"
+    return 1
+  fi
+}
+
 if [[ ${1:-} == "--take-fullscreen" ]]; then
-  pgrep -x slurp >/dev/null || exit 0
-  touch "$FULLSCREEN_MARKER"
-  pkill -x slurp
+  take_target "$FULLSCREEN_MARKER" || exit 0
   exit 0
 fi
 
 if [[ ${1:-} == "--take-window" ]]; then
-  pgrep -x slurp >/dev/null || exit 0
-  touch "$WINDOW_MARKER"
-  pkill -x slurp
+  take_target "$WINDOW_MARKER" || exit 0
   exit 0
 fi
 
@@ -136,10 +244,12 @@ fi
 #
 #   pick-region.sh window next|prev|left|right|up|down
 #
-# Prints the target rectangle directly. "Current" is whichever window the cursor
-# is over, resolved with the same smallest-contains rule slurp applies, so
-# navigation and an interactive pick never disagree about which window is
-# selected. Reading order is top to bottom, then left to right.
+# Prints the target rectangle directly. This does not move a picker that is
+# already open; the --take-* helpers are what act on a running selection.
+# "Current" is whichever window the cursor is over, resolved with the same
+# smallest-contains rule slurp applies, so navigation and an interactive pick
+# never disagree about which window is selected. Reading order is top to bottom,
+# then left to right.
 if [[ ${1:-} == "window" ]]; then
   direction=${2:-}
   pos=$(hyprctl cursorpos)
@@ -222,6 +332,8 @@ if [[ ${1:-} == "window" ]]; then
   exit 0
 fi
 
+# ── the picker ────────────────────────────────────────────────────────────────
+
 MODE=smart
 KEEP_FREEZE=false
 MATCH_MONITOR=false
@@ -234,25 +346,44 @@ for arg in "$@"; do
   esac
 done
 
-# Runs slurp. An empty result with a marker present means a --take-* bind was
-# pressed, so the highlighted rectangle or the monitor is the selection.
+SELECTION=""
+SLURP_PID=""
+FREEZE_PID=""
+RECTANGLES=""
+
+# Runs slurp and stores the selection in SELECTION. slurp is backgrounded so its
+# pid can be recorded and waited on: with a command substitution bash blocks in
+# waitpid and only runs traps after slurp exits, so a reload would leave slurp
+# and the freeze running. Markers are cleared first; a --take-* helper writes one
+# and stops slurp, so an empty selection with a marker present is a take.
+#
+# The rectangle hints go through a file because a background command's stdin is
+# /dev/null unless it is redirected explicitly.
 pick() {
-  local selection
-  rm -f "$FULLSCREEN_MARKER" "$WINDOW_MARKER"
-  selection=$(slurp "$@" 2>/dev/null)
+  rm -f "$FULLSCREEN_MARKER" "$WINDOW_MARKER" "$SLURP_OUTPUT" "$SLURP_INPUT"
+  : >"$SLURP_INPUT"
+  [[ -n $RECTANGLES ]] && printf '%s\n' "$RECTANGLES" >"$SLURP_INPUT"
 
-  if [[ -z $selection && -e $FULLSCREEN_MARKER ]]; then
+  slurp "$@" >"$SLURP_OUTPUT" 2>/dev/null <"$SLURP_INPUT" &
+  SLURP_PID=$!
+  echo "$SLURP_PID" >"$SLURP_PID_FILE"
+
+  wait "$SLURP_PID" 2>/dev/null
+  SLURP_PID=""
+
+  SELECTION=""
+  [[ -r $SLURP_OUTPUT ]] && SELECTION=$(<"$SLURP_OUTPUT")
+  rm -f "$SLURP_OUTPUT" "$SLURP_INPUT" "$SLURP_PID_FILE"
+
+  if [[ -z $SELECTION && -e $FULLSCREEN_MARKER ]]; then
     rm -f "$FULLSCREEN_MARKER"
-    selection=$(focused_monitor_geo)
-  elif [[ -z $selection && -e $WINDOW_MARKER ]]; then
+    SELECTION=$(focused_monitor_geo)
+  elif [[ -z $SELECTION && -e $WINDOW_MARKER ]]; then
     rm -f "$WINDOW_MARKER"
-    selection=$(geo_at_cursor)
+    SELECTION=$(geo_at_cursor)
   fi
-
-  printf '%s' "$selection"
 }
 
-FREEZE_PID=""
 freeze_screen() {
   hyprpicker -r -z >/dev/null 2>&1 &
   FREEZE_PID=$!
@@ -261,26 +392,44 @@ freeze_screen() {
 
 cleanup_freeze() {
   [[ $KEEP_FREEZE == true ]] && return
-  [[ -n $FREEZE_PID ]] && kill $FREEZE_PID 2>/dev/null
+  [[ -n $FREEZE_PID ]] && kill "$FREEZE_PID" 2>/dev/null
 }
-trap cleanup_freeze EXIT
+
+# Installed only by the interactive modes, after every helper above has returned,
+# so a --take-* or --cancel invocation can never remove a live picker's files.
+cleanup_picker() {
+  [[ -n $SLURP_PID ]] && kill "$SLURP_PID" 2>/dev/null
+  cleanup_freeze
+  [[ -n $SLURP_PID ]] && release_pid_file "$SLURP_PID_FILE" "$SLURP_PID"
+  release_pid_file "$PICKER_PID_FILE" "$$"
+  rm -f "$SLURP_OUTPUT" "$SLURP_INPUT"
+}
+
+if [[ $MODE != "fullscreen" ]]; then
+  echo $$ >"$PICKER_PID_FILE"
+  trap cleanup_picker EXIT
+  # `wait` is interruptible, so a reload or disable reaches this trap while
+  # slurp is open and stops slurp and the freeze instead of leaving them behind.
+  trap 'exit 143' TERM INT
+fi
 
 case "$MODE" in
 region)
   freeze_screen
-  SELECTION=$(pick)
+  pick
   ;;
 windows)
+  RECTANGLES=$(get_rectangles)
   freeze_screen
-  SELECTION=$(get_rectangles | pick -r)
+  pick -r
   ;;
 fullscreen)
   SELECTION=$(focused_monitor_geo)
   ;;
 smart | *)
-  RECTS=$(get_rectangles)
+  RECTANGLES=$(get_rectangles)
   freeze_screen
-  SELECTION=$(echo "$RECTS" | pick)
+  pick
 
   # A bare click (area < 20px^2) snaps to whichever rectangle it landed in, so
   # users don't end up with accidental 2px captures. X and Y can be negative in
@@ -291,7 +440,7 @@ smart | *)
     # window resolves to the window rather than the monitor behind it. The
     # rectangle list is monitors first, and a first-match loop would take the
     # monitor every time.
-    if resolve_rect_at "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" <<<"$RECTS"; then
+    if resolve_rect_at "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" <<<"$RECTANGLES"; then
       SELECTION=$RESOLVED_RECT
     fi
   fi

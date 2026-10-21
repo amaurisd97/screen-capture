@@ -22,7 +22,6 @@ Install these commands on `PATH`. Every one is declared in `plugin.toml`:
 - `hyprpicker` — freezes the screen while you drag the region.
 - `ffmpeg` — trims the opening frame and normalizes audio.
 - `ffprobe` — inspects audio streams during normalization.
-- `pgrep` and `pkill` — tracks and cancels background processes and pickers cleanly.
 - `flock` — serializes start and stop.
 
 For the webcam overlay: `mpv` (renders the camera) and `v4l2-ctl` (picks a
@@ -62,13 +61,24 @@ noctalia msg panel-toggle amaurisd97/screen-capture:menu
 | Application | Click a window to record exactly its rectangle |
 | Full screen | The focused monitor, no interaction |
 
-Keyboard while the picker is open:
+Keyboard while the picker is open (bind these to compositor shortcuts):
 
 ```sh
 scripts/pick-region.sh --take-fullscreen        # take the focused monitor
 scripts/pick-region.sh --take-window            # take the rectangle under the cursor
-scripts/pick-region.sh --select-window next     # move the selection
 ```
+
+Both helpers stop only the picker this plugin started, so another `slurp`
+selection on the system is left alone.
+
+Without opening a picker, cycle to a window and print its rectangle:
+
+```sh
+scripts/pick-region.sh window next              # also prev|left|right|up|down
+```
+
+`window` starts from the window under the cursor and prints the target
+rectangle; it does not move a selection that is already open.
 
 ### Webcam
 
@@ -139,9 +149,10 @@ are thin clients that only mirror state.
 - Writes recordings to `directory` (default `~/Videos/Recordings`).
 - Writes run state, the log and detached-job results next to
   `$XDG_RUNTIME_DIR/screen-capture` (overridable with
-  `SCREEN_CAPTURE_RUNTIME_DIR`).
+  `SCREEN_CAPTURE_RUNTIME_DIR`), including the picker and slurp PIDs that
+  `pick-region.sh --cancel` uses to dismiss only this plugin's selection.
 - Spawns `gpu-screen-recorder`, `slurp`, `hyprctl`, `hyprpicker`, `jq`,
-  `ffmpeg` and `flock`; with the webcam, `mpv` and `v4l2-ctl`.
+  `ffmpeg`, `ffprobe` and `flock`; with the webcam, `mpv` and `v4l2-ctl`.
 - Makes no network calls.
 
 ### Why not the portal
@@ -181,7 +192,7 @@ CBR mode.
 - `no_dim` is only available as a Hyprland window rule, so the webcam overlay
   may dim while it is unfocused. Dimming is cosmetic.
 - Region coordinates are the compositor's logical space, matching `slurp`.
-- A reload or disable stops an active recording.
+- A reload or disable stops an active recording and dismisses an open picker.
 
 ## Testing the scripts without the plugin
 

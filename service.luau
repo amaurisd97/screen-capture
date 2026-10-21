@@ -74,19 +74,30 @@ local function fileUri(path)
   return "file://" .. encoded
 end
 
+-- Resolved lazily and cached: the data directory holds detached-job results.
+local function ensureDataDir()
+  if dataDir then
+    return dataDir
+  end
+  local dir = noctalia.pluginDataDir()
+  if dir and dir ~= "" then
+    noctalia.mkdirAll(dir)
+    dataDir = dir
+  end
+  return dataDir
+end
+
 local function cancelPicker()
-  local dir = ensureDataDir()
-  if not dir then
+  -- The picker script owns its runtime directory and PID files. Delegating
+  -- cancellation to it keeps both sides on the same path and lets it stop only
+  -- the slurp and the freeze it started. The scripts keep that state under
+  -- $XDG_RUNTIME_DIR/screen-capture, not in pluginDataDir(), and killing the
+  -- picker's shell is not enough: slurp and hyprpicker are its children.
+  if not scriptPath then
     return
   end
-  local pidFile = dir .. "/capture-picker-pid"
-  if noctalia.fileExists(pidFile) then
-    local pid = noctalia.readFile(pidFile)
-    if pid and pid ~= "" then
-      noctalia.runAsync({ "pkill", "-P", pid })
-      noctalia.runAsync({ "kill", pid })
-    end
-    noctalia.removeFile(pidFile)
+  if not noctalia.runAsync({ sibling("pick-region.sh"), "--cancel" }) then
+    log("could not launch picker cancellation")
   end
 end
 
@@ -112,18 +123,6 @@ end
 -- through scripts/run-detached.sh with no callback and the service polls for a
 -- result file. The helper writes .out and .err and, last, .code: seeing .code
 -- means the other two are complete.
-
-local function ensureDataDir()
-  if dataDir then
-    return dataDir
-  end
-  local dir = noctalia.pluginDataDir()
-  if dir and dir ~= "" then
-    noctalia.mkdirAll(dir)
-    dataDir = dir
-  end
-  return dataDir
-end
 
 local function startJob(argv, onDone)
   local dir = ensureDataDir()
@@ -298,7 +297,7 @@ local function launch(chosen, target, gen)
 
   log(`starting: {table.concat(argv, " ")}`)
 
-   local started = startJob(argv, function(result)
+  local started = startJob(argv, function(result)
     if gen ~= generation then
       return
     end
@@ -352,8 +351,8 @@ local function stop()
   end
 
   -- While selecting, the picker is ours rather than record.sh's, so record.sh
-  -- cannot cancel it. Kill slurp: the picker exits non-zero and resolveTarget
-  -- sees the cancel. Bumping the generation drops the in-flight picker.
+  -- cannot cancel it. Hand cancellation to pick-region.sh, which stops the
+  -- slurp and freeze it owns. Bumping the generation drops the in-flight picker.
   if state == "selecting" then
     cancelPicker()
     generation = generation + 1
